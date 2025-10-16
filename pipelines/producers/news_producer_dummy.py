@@ -1,0 +1,1 @@
+# Stream synthetic news.csv data to Kafka topic "news.raw" (JSON)
