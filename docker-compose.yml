@@ -1,9 +1,58 @@
-version: "3.9"
-
 services:
+  # Kafka broker using KRaft mode: server storing data, handling data streaming requests, managing metadata
+  broker:
+    image: confluentinc/cp-kafka:7.8.3
+    container_name: broker
+    hostname: broker
+    ports:
+      - "9092:9092"  # exposes port 9092 on host, host apps can connect to localhost:9092
+    environment:
+      KAFKA_KRAFT_MODE: "true"
+      # Single node config
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@broker:29093  # who can vote on cluster decisions, main controller + backups
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 # for single broker, no backup
+      # Listeners:
+      #  - PLAINTEXT: internal container-to-container traffic (broker:29092)
+      #  - CONTROLLER: for controller communication (broker:29093)
+      #  - PLAINTEXT_HOST: for producer and consumer clients (localhost:9092)
+      KAFKA_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://broker:29093
+      # Advertised listeners: tell clients what address to use after connecting
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      TZ: ${TZ}
+    healthcheck:
+      # List Kafka topics, redirects output and standard error to /dev/null
+      test: [ "CMD-SHELL", "/usr/bin/kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # Helper container that runs once to create topics defined in .env
+  kafka-setup:
+    image: confluentinc/cp-kafka:7.8.3
+    depends_on:
+      broker:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ}
+      KAFKA_BROKER: ${KAFKA_BROKER}
+      KAFKA_TOPICS: ${KAFKA_TOPICS}
+    entrypoint: ["/bin/bash","/create_topics.sh"]
+    volumes:
+      - ./kafka/create_topics.sh:/create_topics.sh:ro
+
+  # MySQL database for persisting data
   mysql:
-    image: mysql:8.0
-    ports: ["3306:3306"]
+    image: mysql:8
+    ports: ["3307:3306"]  # Switch to 3307 to avoid conflict if local MySQL is running
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -14,18 +63,22 @@ services:
       - mysql_data:/var/lib/mysql
       - ./db:/docker-entrypoint-initdb.d
     healthcheck:
+      # Use mysqladmin to ping the server, requires root password
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 20
 
+  # FastAPI app
   api:
     build:
-      context: ./services/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/api/Dockerfile
     image: ${API_IMAGE}
     depends_on:
       mysql:
+        condition: service_healthy
+      broker:
         condition: service_healthy
     environment:
       MYSQL_HOST: mysql
@@ -34,26 +87,12 @@ services:
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
       TZ: ${TZ}
+      KAFKA_BROKER: ${KAFKA_BROKER}
     ports: ["${API_PORT}:8000"]
     volumes:
       - ./services/api/app:/app/app:ro
 
-  airflow:
-    image: apache/airflow:2.9.2
-    depends_on:
-      mysql:
-        condition: service_healthy
-    environment:
-      AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
-      AIRFLOW__CORE__FERNET_KEY: 'fernetfernetfernetfernetfernetfernet='
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: mysql+mysqlconnector://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}
-      TZ: ${TZ}
-    ports: ["8080:8080"]
-    command: bash -c "airflow db migrate && airflow users create --username admin --password admin --firstname A --lastname F --role Admin --email admin@example.com || true && airflow webserver & airflow scheduler"
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./airflow/logs:/opt/airflow/logs
-
+# named volumes for persistent data
 volumes:
+  kafka_data:
   mysql_data:

@@ -1,6 +1,44 @@
 [project]
 name = "financialinsights"
 version = "0.1.0"
-description = "Add your description here"
+description = "Financial news sentiment + price correlation + forecasting"
+readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # Data streaming and processing
+    "confluent-kafka>=2.12.0",
+    # Backend API & Database
+    "fastapi>=0.119.0",
+    "pymysql>=1.1.2",
+    "redis>=6.4.0",
+    "uvicorn>=0.37.0",
+    # ML, NLP
+    "numpy>=1.26.4",
+    "pandas>=2.2.3",
+    "scikit-learn>=1.5.0",
+    # Utilities/ Common
+    "pydantic>=2.12.2",
+    "python-dotenv>=1.1.1",
+    "requests>=2.32.5",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.6", # Python linter
+  "pytest>=8.2", # Testing framework
+  "mypy>=1.10", # Static type checker
+  "types-requests", # Type stubs for requests
+  "pre-commit>=4.3.0", # Pre-commit hooks
+]
+
+[tool.uv.workspace]
+members = ["FinancialInsights"]
+
+[tool.ruff]
+line-length = 100
+lint.select = ["E","F","I","UP","B"]         # Error codes to check
+exclude = ["docs","build",".venv"]      # Exclude these directories
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
