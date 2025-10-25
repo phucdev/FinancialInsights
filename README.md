@@ -5,7 +5,7 @@ A real-time financial news sentiment analysis and stock trend correlation engine
 ## Overview
 
 The goal is to build a streaming data pipeline that ingests real-time financial news articles and stock price data, performs sentiment analysis on the news articles, and correlates the sentiment with stock price movements. The processed data is then stored in a MySQL database and made accessible via a FastAPI web service for visualization and further analysis.
-In addition I want to use Toto-Open-Base-1.0 for time series forecasting of stock prices based on historical data and sentiment trends.
+In addition, I want to use Toto-Open-Base-1.0 for time series forecasting of stock prices based on historical data and sentiment trends.
 
 This is a work in progress project for learning and demonstrating skills in data engineering, machine learning engineering, and modern data stack technologies.
 
