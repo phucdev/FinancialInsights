@@ -3,20 +3,19 @@ import json
 import os
 
 from confluent_kafka import Consumer
-from dotenv import load_dotenv, find_dotenv
-
+from dotenv import find_dotenv, load_dotenv
 
 # Set up our consumer
 load_dotenv(find_dotenv())
 consumer_config = {
     "bootstrap.servers": os.getenv("KAFKA_BROKER_HOST", "localhost:9092"),
     "group.id": "ingestor_group",  # Unique group ID for the consumer group
-    "auto.offset.reset": "earliest",    # Start reading at the earliest message if no offset is committed
+    "auto.offset.reset": "earliest",  # Start reading at the earliest message if no offset
 }
 
 consumer = Consumer(consumer_config)
 
-consumer.subscribe(["news.raw"])    # add prices.raw when ready
+consumer.subscribe(["news.raw"])  # add prices.raw when ready
 
 print("🟢 Consumer is running and subscribed to news.raw")
 
