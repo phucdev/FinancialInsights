@@ -1,9 +1,13 @@
 import argparse
+import json
 import os
+import pandas as pd
+from typing import List, Dict, Any, Tuple
 
 from alpha_vantage.alphaintelligence import AlphaIntelligence
 from alpha_vantage.timeseries import TimeSeries
 from dotenv import find_dotenv, load_dotenv
+
 
 DAILY_COLUMN_MAP = {
     "1. open": "open",
@@ -97,6 +101,121 @@ def parse_args() -> Config:
         aggregate_news=args.aggregate_news,
         dry_run=args.dry_run,
     )
+
+
+def make_clients(api_key: str):
+    """Create Alpha Vantage API clients."""
+    ts_client = TimeSeries(key=api_key, output_format="pandas")
+    ai_client = AlphaIntelligence(key=api_key)
+    return ts_client, ai_client
+
+
+def fetch_daily_df(ts_client: TimeSeries, ticker: str):
+    """Fetch daily stock data for a given ticker."""
+    data, metadata = ts_client.get_daily(ticker)
+    data = data.rename(columns=DAILY_COLUMN_MAP)
+    # data.index = data.index.tz_localize("US/Eastern")
+    return data
+
+
+def fetch_news_data_df(
+        ai_client: AlphaIntelligence,
+        tickers: str,
+        topics=None,
+        time_from=None,
+        time_to=None,
+        sort='LATEST',
+        limit=50
+):
+    """Fetch news sentiment data for a given ticker/comma separated list of tickers."""
+    news_data = ai_client.get_news_sentiment(
+        tickers=tickers,
+        topics=topics,
+        time_from=time_from,
+        time_to=time_to,
+        sort=sort,
+        limit=limit
+    )[0]
+    return news_data
+
+
+def normalize_prices_df(df: pd.DataFrame, ticker: str, max_days: int) -> List[Dict[str, Any]]:
+    """
+    Convert the client DataFrame into list-of-dicts for prices_daily.
+    """
+    df = df.sort_index(ascending=False).head(max_days).copy()
+    rename = {
+        "1. open": "open",
+        "2. high": "high",
+        "3. low":  "low",
+        "4. close": "close",
+        "5. volume": "volume",
+    }
+    df = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+
+    rows: List[Dict[str, Any]] = []
+    for idx, row in df.iterrows():
+        d = idx.date().isoformat()
+        rows.append({
+            "ticker": ticker,
+            "date": d,
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low":  float(row["low"]),
+            "close": float(row["close"]),
+            "volume": int(row["volume"]),
+        })
+    return rows
+
+
+def normalize_news_df(
+    df: pd.DataFrame,
+    watchlist: List[str],
+) -> List[Dict[str, Any]]:
+    """
+    Build row per article.
+    """
+    if df.empty:
+        df = pd.DataFrame(columns=[
+            "id", "article_id", "ticker", "published_at", "date", "title", "url", "source", "summary", "raw"
+        ])
+    else:
+        def parse_tp(tp: str) -> tuple[pd.Timestamp, str]:
+            date_iso = f"{tp[:4]}-{tp[4:6]}-{tp[6:8]}"
+            ts = pd.to_datetime(tp, format="%Y%m%dT%H%M%S", errors="coerce")
+            if pd.isna(ts):
+                ts = pd.to_datetime(date_iso)  # midnight
+            # keep tz-naive UTC for MySQL (or set tz and convert)
+            return ts, date_iso
+
+        parsed = df["time_published"].apply(parse_tp)
+        df["published_at"] = parsed.apply(lambda x: x[0])
+        df["date"] = parsed.apply(lambda x: x[1])
+
+        df = df.dropna(subset=["date", "url"])
+        # Ensure ticker_sentiment is a list, then explode
+        df["ticker_sentiment"] = df["ticker_sentiment"].apply(lambda x: x if isinstance(x, list) else [])
+        df = df.loc[df["ticker_sentiment"].map(len) > 0]
+
+        # Explode to one row per mentioned ticker
+        df_expl = df.explode("ticker_sentiment", ignore_index=True)
+        df_expl["mentioned_ticker"] = df_expl["ticker_sentiment"].apply(
+            lambda d: (d or {}).get("ticker", "").upper()
+        )
+        # Filter to watchlist
+        wl = set([t.upper() for t in watchlist])
+        df_expl = df_expl[df_expl["mentioned_ticker"].isin(wl)]
+
+        # Extract ticker specific sentiment score and label
+        df_expl["sentiment_score"] = df_expl["ticker_sentiment"].apply(
+            lambda d: (d or {}).get("sentiment_score", 0.0)
+        )
+        df_expl["sentiment_label"] = df_expl["ticker_sentiment"].apply(
+            lambda d: (d or {}).get("sentiment_label", "")
+        )
+
+        
+    return df.to_dict(orient="records")
 
 
 load_dotenv(find_dotenv())
